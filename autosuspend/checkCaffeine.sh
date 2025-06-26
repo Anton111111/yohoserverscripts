@@ -5,7 +5,6 @@ if [ -s "$CAFFEINE_FILE_PATH" ]; then
 	threshold=$(<"$CAFFEINE_FILE_PATH")
 	# Validate threshold is a number
 	if ! [[ "$threshold" =~ ^[0-9]+$ ]]; then
-		echo "Not threshold"
 		exit 1
 	fi
 
@@ -19,11 +18,9 @@ if [ -s "$CAFFEINE_FILE_PATH" ]; then
 	# Calculate difference
 	diff=$((now - modTime))
 	if ((diff <= threshold)); then
-		echo "Good"
 		exit 0
 	else
-		echo "Not"
-		echo "0">"$CAFFEINE_FILE_PATH"
+		echo "0" >"$CAFFEINE_FILE_PATH"
 		exit 1
 	fi
 else
