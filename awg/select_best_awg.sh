@@ -3,7 +3,7 @@
 # --- SETTINGS ---
 CONFIGS_DIR="/home/anton/awg_configs"
 INTERFACE_NAME="awg-best"
-TMP_CONF="/etc/amneziawg/${INTERFACE_NAME}.conf"
+TMP_CONF="/etc/amnezia/amneziawg/${INTERFACE_NAME}.conf"
 PING_ATTEMPTS=5
 HANDSHAKE_TIMEOUT=5 # Max seconds to wait for handshake
 
@@ -13,6 +13,10 @@ TARGETS=(
     "52.208.0.0"
     "35.176.0.0"
     "13.48.0.0"
+    "ec2.eu-central-1.amazonaws.com"
+    "ec2.eu-west-1.amazonaws.com"
+    "ec2.eu-west-2.amazonaws.com"
+    "ec2.eu-north-1.amazonaws.com"
 )
 TARGET_PORT="443"
 
@@ -73,7 +77,7 @@ for config in "${configs[@]}"; do
     echo -n "  [*] Waiting for tunnel handshake... "
     tunnel_ready=false
     for ((i=1; i<=HANDSHAKE_TIMEOUT; i++)); do
-        if wg show "$INTERFACE_NAME" transfer >/dev/null 2>&1; then
+        if awg show "$INTERFACE_NAME" transfer >/dev/null 2>&1; then
             tunnel_ready=true
             break
         fi
@@ -109,7 +113,7 @@ for config in "${configs[@]}"; do
                 latencies+=(-1)
             fi
             sleep 0.1
-        fi
+        done
 
         # Filter out failed attempts
         valid_latencies=()
@@ -169,47 +173,28 @@ for config in "${configs[@]}"; do
 done
 
 # --- PRINT FINAL SORTED RESULTS ---
-if [ ${#RESULTS_AVERAGE[@]} -eq 0 ]; then
-    echo -e "${RED}Critical Error: None of the configurations could reach any of the targets.${NC}"
-    exit 1
-fi
-
-echo -e "\n${GREEN}=== BENCHMARK RESULTS (Sorted by Overall Average Latency) ===${NC}"
-
-# Dynamic header based on TARGETS array
-printf "%-30s | " "Configuration File"
-for target_ip in "${TARGETS[@]}"; do
-    printf "%-14s | " "$target_ip"
-done
-printf "%-15s\n" "Overall Avg"
-
-# Table divider line
-printf "%.0s-" {1..33}
-for target_ip in "${TARGETS[@]}"; do printf "%.0s-" {1..17}; done
-printf "%.0s-\n" {1..15}
+echo -e "\n${GREEN}=== BENCHMARK RESULTS (Sorted by Overall Average) ===${NC}"
 
 # Sort configs by overall average latency (ascending)
 for config in "${!RESULTS_AVERAGE[@]}"; do
     echo "$config:${RESULTS_AVERAGE[$config]}"
 done | sort -t: -k2 -n | while IFS=: read -r config overall_avg; do
 
-    printf "%-30s | " "$config"
-    
+    # Collect medians for all targets into a single string
+    medians_list=""
     for target_ip in "${TARGETS[@]}"; do
         clean_ip="${target_ip//./_}"
         key="${config}_${clean_ip}"
         
         if [[ -n "${RESULTS_MEDIAN[$key]}" ]]; then
-            printf "%-14s | " "${RESULTS_MEDIAN[$key]} ms"
+            medians_list+="${RESULTS_MEDIAN[$key]}ms, "
         else
-            printf "%-14s | " "N/A"
+            medians_list+="N/A, "
         fi
     done
+    # Strip the trailing comma and space
+    medians_list="${medians_list%, }"
 
-    printf "${GREEN}%-15s${NC}\n" "${overall_avg} ms"
+    # Print clean list entry
+    echo -e "Config: ${BLUE}$config${NC} | Medians: [$medians_list] | Overall Avg: ${GREEN}${overall_avg}ms${NC}"
 done
-
-# Table footer line
-printf "%.0s-" {1..33}
-for target_ip in "${TARGETS[@]}"; do printf "%.0s-" {1..17}; done
-printf "%.0s-\n" {1..15}
