@@ -27,6 +27,52 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 NC='\033[0;m' # No Color
 
+lookup_country() {
+    local endpoint_host="$1"
+    if [ -z "$endpoint_host" ]; then
+        echo "Unknown"
+        return
+    fi
+
+    local ip_address="$endpoint_host"
+    if [[ ! "$endpoint_host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        if command -v getent >/dev/null 2>&1; then
+            ip_address=$(getent ahosts "$endpoint_host" | awk '{print $1; exit}')
+        elif command -v host >/dev/null 2>&1; then
+            ip_address=$(host "$endpoint_host" | awk '/has address/ {print $4; exit}')
+        elif command -v dig >/dev/null 2>&1; then
+            ip_address=$(dig +short A "$endpoint_host" | head -n 1)
+        fi
+    fi
+
+    if [ -z "$ip_address" ]; then
+        echo "Unknown"
+        return
+    fi
+
+    local country
+    if command -v curl >/dev/null 2>&1; then
+        country=$(curl -fsSL "https://ipapi.co/${ip_address}/country_name/" 2>/dev/null)
+    elif command -v wget >/dev/null 2>&1; then
+        country=$(wget -qO- "https://ipapi.co/${ip_address}/country_name/" 2>/dev/null)
+    else
+        echo "Unknown"
+        return
+    fi
+
+    country="$(echo "$country" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    if [ -z "$country" ] || [[ "$country" == *"error"* ]]; then
+        echo "Unknown"
+    else
+        echo "$country"
+    fi
+}
+
+get_config_endpoint() {
+    local config_file="$1"
+    awk -F= '/^[[:space:]]*Endpoint[[:space:]]*=/ { gsub(/^[[:space:]]*|[[:space:]]*$/,"", $2); print $2; exit }' "$config_file"
+}
+
 # Ensure root privileges
 if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}Error: Please run this script as root (sudo).${NC}"
@@ -56,6 +102,7 @@ fi
 
 declare -A RESULTS_MEDIAN
 declare -A RESULTS_AVERAGE
+declare -A RESULTS_COUNTRY
 
 echo -e "${BLUE}Starting AWG configuration benchmark...${NC}"
 echo "------------------------------------------------------------------"
@@ -63,8 +110,18 @@ echo "------------------------------------------------------------------"
 for config in "${configs[@]}"; do
     echo -e "${YELLOW}Testing configuration: ${BLUE}$config${NC}"
 
-    # Setup temporary configuration
-    cp "$config" "$TMP_CONF"
+    endpoint_value=$(get_config_endpoint "$config")
+    if [ -n "$endpoint_value" ]; then
+        endpoint_host="${endpoint_value%%:*}"
+        country_name=$(lookup_country "$endpoint_host")
+        RESULTS_COUNTRY["$config"]="$country_name"
+        echo -e "  [*] Endpoint: ${BLUE}${endpoint_value}${NC} | Country: ${GREEN}${country_name}${NC}"
+    else
+        endpoint_host=""
+        country_name="Unknown"
+        RESULTS_COUNTRY["$config"]="$country_name"
+        echo -e "  [!] Could not determine Endpoint from config; country unknown.${NC}"
+    fi
 
     # Try to bring up the tunnel
     if ! awg-quick up "$INTERFACE_NAME" >/dev/null 2>&1; then
@@ -195,6 +252,7 @@ done | sort -t: -k2 -n | while IFS=: read -r config overall_avg; do
     # Strip the trailing comma and space
     medians_list="${medians_list%, }"
 
+    country_name="${RESULTS_COUNTRY[$config]:-Unknown}"
     # Print clean list entry
-    echo -e "Config: ${BLUE}$config${NC} | Medians: [$medians_list] | Overall Avg: ${GREEN}${overall_avg}ms${NC}"
+    echo -e "Config: ${BLUE}$config${NC} | Country: ${GREEN}${country_name}${NC} | Medians: [$medians_list] | Overall Avg: ${GREEN}${overall_avg}ms${NC}"
 done
